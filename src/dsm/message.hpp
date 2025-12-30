@@ -5,7 +5,19 @@
 
 namespace dsm {
 
-enum class MessageType : uint8_t { WRITE_REQUEST, CAS_REQUEST, WRITE_ACK, CAS_ACK };
+enum class MessageType : uint8_t {
+
+  WRITE_REQUEST,
+
+  CAS_REQUEST,
+
+  WRITE_ACK,
+
+  CAS_ACK,
+
+  SHUTDOWN
+
+};
 
 struct Timestamp {
   int clock;

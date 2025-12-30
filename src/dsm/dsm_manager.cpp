@@ -2,24 +2,63 @@
 #include "distributed_shared_variable.hpp"
 #include <array>
 #include <functional>
+#include <mutex>
 #include <mpi.h>
 
 namespace dsm {
 
 DSMManager::DSMManager(int rank, int world_size, Config config)
-    : rank_(rank), world_size_(world_size), config_(std::move(config)) {
+    : rank_(rank), world_size_(world_size), config_(std::move(config)),
+      listener_(std::make_unique<Listener>()) {
+
+  // Create event handlers for the listener
+  auto request_handler = [this](const Message &msg) {
+    auto it = variables_.find(msg.var_id);
+    if (it == variables_.end()) {
+      return; // Not subscribed
+    }
+    auto &var = it->second;
+
+    var.add_request(msg);
+
+    Message ack_msg;
+    ack_msg.type =
+        (msg.type == MessageType::WRITE_REQUEST) ? MessageType::WRITE_ACK : MessageType::CAS_ACK;
+    ack_msg.ts = msg.ts; // Echo the timestamp of the original request
+    ack_msg.var_id = msg.var_id;
+
+    for (int subscriber_rank : var.get_subscribers()) {
+      MPI_Send(&ack_msg, 1, mpi_message_type_, subscriber_rank, 0, MPI_COMM_WORLD);
+    }
+    var.process_requests();
+  };
+
+  auto ack_handler = [this](const Message &msg, int sender_rank) {
+    auto it = variables_.find(msg.var_id);
+    if (it == variables_.end()) {
+      return; // Not subscribed
+    }
+    auto &var = it->second;
+    var.add_ack(msg.ts, sender_rank);
+    var.process_requests();
+  };
+
+  // Register handlers with the listener
+  listener_->on_request(request_handler);
+  listener_->on_ack(ack_handler);
+
   for (const auto &[var_id, subscribers] : config_.subscriptions) {
     for (int subscriber_rank : subscribers) {
-      if (subscriber_rank != rank_) {
-        continue;
+      if (subscriber_rank == rank_) {
+        auto [it, inserted] = variables_.try_emplace(var_id, subscribers);
+        if (inserted) {
+          it->second.register_cas_result_handler(
+              std::bind_front(&DSMManager::on_cas_result, this));
+          it->second.register_write_result_handler(
+              std::bind_front(&DSMManager::on_write_result, this));
+        }
+        break;
       }
-
-      auto [it, inserted] = variables_.try_emplace(var_id, subscribers);
-      if (inserted) {
-        it->second.register_cas_result_handler(std::bind_front(&DSMManager::on_cas_result, this));
-      }
-
-      break;
     }
   }
 
@@ -45,61 +84,21 @@ DSMManager::DSMManager(int rank, int world_size, Config config)
 }
 
 DSMManager::~DSMManager() {
+  // 1. Send a "poison pill" message to our own listener thread to unblock it.
+  Message shutdown_msg;
+  shutdown_msg.type = MessageType::SHUTDOWN;
+  MPI_Send(&shutdown_msg, 1, mpi_message_type_, rank_, 0, MPI_COMM_WORLD);
+
+  // 2. Explicitly destroy the listener, which joins the thread. This is a
+  // blocking call that ensures the thread is finished before we proceed.
+  listener_.reset();
+
+  // 3. Now that the thread is gone, it's safe to free the MPI resources.
   MPI_Type_free(&mpi_message_type_);
   MPI_Type_free(&mpi_timestamp_type_);
 }
 
-void DSMManager::run() {
-  listener_ = std::jthread(&DSMManager::listener_thread, this, stop_source_.get_token());
-}
-
-void DSMManager::stop() { stop_source_.request_stop(); }
-
-void DSMManager::listener_thread(std::stop_token stop_token) {
-  while (!stop_token.stop_requested()) {
-    int flag = 0;
-    MPI_Status status;
-    MPI_Iprobe(MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &flag, &status);
-
-    if (flag) {
-      Message msg;
-      MPI_Recv(&msg, 1, mpi_message_type_, status.MPI_SOURCE, 0, MPI_COMM_WORLD, &status);
-      int sender_rank = status.MPI_SOURCE;
-
-      auto it = variables_.find(msg.var_id);
-      if (it == variables_.end()) {
-        continue; // Not subscribed to this variable
-      }
-      auto &var = it->second;
-
-      switch (msg.type) {
-      case MessageType::WRITE_REQUEST:
-      case MessageType::CAS_REQUEST: {
-        var.add_request(msg);
-        Message ack_msg;
-        ack_msg.type = (msg.type == MessageType::WRITE_REQUEST) ? MessageType::WRITE_ACK
-                                                                : MessageType::CAS_ACK;
-        ack_msg.ts = msg.ts; // Echo the timestamp of the original request
-        ack_msg.var_id = msg.var_id;
-        for (int subscriber_rank : var.get_subscribers()) {
-          MPI_Send(&ack_msg, 1, mpi_message_type_, subscriber_rank, 0, MPI_COMM_WORLD);
-        }
-        break;
-      }
-
-      case MessageType::WRITE_ACK:
-      case MessageType::CAS_ACK: {
-        var.add_ack(msg.ts, sender_rank);
-        break;
-      }
-      }
-
-      var.process_requests();
-    }
-
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
-}
+void DSMManager::run() { listener_->run(mpi_message_type_); }
 
 void DSMManager::register_callback(int var_id, std::function<void(int)> callback) {
   auto it = variables_.find(var_id);
@@ -109,7 +108,7 @@ void DSMManager::register_callback(int var_id, std::function<void(int)> callback
   it->second.register_callback(std::move(callback));
 }
 
-void DSMManager::write(int var_id, int value) {
+std::future<void> DSMManager::write(int var_id, int value) {
   auto it = variables_.find(var_id);
   if (it == variables_.end()) {
     throw std::runtime_error("Attempted to write to non-subscribed variable.");
@@ -126,13 +125,24 @@ void DSMManager::write(int var_id, int value) {
   msg.var_id = var_id;
   msg.value1 = value;
 
+  std::promise<void> promise;
+  auto future = promise.get_future();
+
+  {
+    std::lock_guard<std::mutex> lock(write_promises_mtx_);
+    write_promises_[ts] = std::move(promise);
+  }
+
   const auto &subscribers = config_.subscriptions.at(var_id);
   for (int subscriber_rank : subscribers) {
     MPI_Send(&msg, 1, mpi_message_type_, subscriber_rank, 0, MPI_COMM_WORLD);
   }
+
+  return future;
 }
 
-std::future<bool> DSMManager::compare_and_exchange(int var_id, int expected_value, int new_value) {
+std::future<bool> DSMManager::compare_and_exchange(int var_id, int expected_value,
+                                                 int new_value) {
   auto it = variables_.find(var_id);
   if (it == variables_.end()) {
     throw std::runtime_error("Attempted to CAS non-subscribed variable.");
@@ -172,6 +182,12 @@ void DSMManager::on_cas_result(const Timestamp &ts, bool success) {
   }
 }
 
+void DSMManager::on_write_result(const Timestamp &ts) {
+  if (rank_ == ts.rank) {
+    resolve_write_promise(ts);
+  }
+}
+
 void DSMManager::resolve_cas_promise(Timestamp ts, bool success) {
   std::lock_guard<std::mutex> lock(cas_promises_mtx_);
   auto it = cas_promises_.find(ts);
@@ -179,6 +195,16 @@ void DSMManager::resolve_cas_promise(Timestamp ts, bool success) {
   if (it != cas_promises_.end()) {
     it->second.set_value(success);
     cas_promises_.erase(it);
+  }
+}
+
+void DSMManager::resolve_write_promise(const Timestamp &ts) {
+  std::lock_guard<std::mutex> lock(write_promises_mtx_);
+  auto it = write_promises_.find(ts);
+
+  if (it != write_promises_.end()) {
+    it->second.set_value();
+    write_promises_.erase(it);
   }
 }
 

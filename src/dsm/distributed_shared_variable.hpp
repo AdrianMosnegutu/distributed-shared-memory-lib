@@ -18,6 +18,7 @@ struct RequestState {
 class DistributedSharedVariable {
 public:
   using CasResultHandler = std::function<void(const Timestamp &, bool)>;
+  using WriteResultHandler = std::function<void(const Timestamp &)>;
 
   DistributedSharedVariable() = default;
   DistributedSharedVariable(std::vector<int> subscribers);
@@ -37,18 +38,21 @@ public:
     cas_result_handler_ = std::forward<Handler>(handler);
   }
 
+  template <typename Handler> void register_write_result_handler(Handler &&handler) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    write_result_handler_ = std::forward<Handler>(handler);
+  }
+
 private:
   int value_{0};
   Timestamp clock_{.clock = 0, .rank = 0};
-
-  const std::vector<int> subscribers_;
-
+  std::vector<int> subscribers_;
   std::function<void(int)> callback_;
   CasResultHandler cas_result_handler_;
+  WriteResultHandler write_result_handler_;
 
   std::unordered_map<Timestamp, RequestState> requests_;
   std::priority_queue<Timestamp, std::vector<Timestamp>, std::greater<>> processing_queue_;
-
   mutable std::mutex mtx_;
 };
 

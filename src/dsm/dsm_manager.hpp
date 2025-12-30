@@ -1,12 +1,13 @@
 #pragma once
 
 #include "config.hpp"
+#include "listener.hpp"
 #include "message.hpp"
 #include <functional>
 #include <future>
+#include <memory>
 #include <mpi.h>
 #include <mutex>
-#include <thread>
 #include <unordered_map>
 
 namespace dsm {
@@ -19,29 +20,30 @@ public:
   ~DSMManager();
 
   void run();
-  void stop();
 
   void register_callback(int var_id, std::function<void(int)> callback);
 
-  void write(int var_id, int value);
-  std::future<bool> compare_and_exchange(int var_id, int expected_value, int new_value);
+  std::future<void> write(int var_id, int value);
+  std::future<bool> compare_and_exchange(int var_id, int expected_value,
+                                         int new_value);
 
   void resolve_cas_promise(Timestamp ts, bool success);
+  void resolve_write_promise(const Timestamp &ts);
 
 private:
   void on_cas_result(const Timestamp &ts, bool success);
-  void listener_thread(std::stop_token stop_token);
+  void on_write_result(const Timestamp &ts);
 
   int rank_;
   int world_size_;
   Config config_;
 
+  std::unique_ptr<Listener> listener_;
   std::unordered_map<int, DistributedSharedVariable> variables_;
   std::unordered_map<Timestamp, std::promise<bool>> cas_promises_;
   std::mutex cas_promises_mtx_;
-
-  std::jthread listener_;
-  std::stop_source stop_source_;
+  std::unordered_map<Timestamp, std::promise<void>> write_promises_;
+  std::mutex write_promises_mtx_;
 
   MPI_Datatype mpi_message_type_;
   MPI_Datatype mpi_timestamp_type_;

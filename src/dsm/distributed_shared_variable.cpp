@@ -21,44 +21,64 @@ void DistributedSharedVariable::add_ack(const Timestamp &ts, int sender_rank) {
 }
 
 void DistributedSharedVariable::process_requests() {
-  std::lock_guard<std::mutex> lock(mtx_);
+  std::vector<std::function<void()>> handlers_to_call;
 
-  while (!processing_queue_.empty()) {
-    const Timestamp &ts = processing_queue_.top();
-    RequestState &req = requests_.at(ts);
+  { // Scope for the lock guard
+    std::lock_guard<std::mutex> lock(mtx_);
 
-    // A request can only be processed if it has been acknowledged by all subscribers.
-    if (req.acks.size() < subscribers_.size()) {
-      break; // The first request in the queue is not ready, so none after it are either.
+    while (!processing_queue_.empty()) {
+      const Timestamp &ts = processing_queue_.top();
+      RequestState &req = requests_.at(ts);
+
+      // A request can only be processed if it has been acknowledged by all
+      // subscribers.
+      if (req.acks.size() < subscribers_.size()) {
+        break; // The first request in the queue is not ready, so none after it
+               // are either.
+      }
+
+      // Copy necessary data and remove the request from the queues.
+      const Message msg = req.msg;
+      requests_.erase(ts);
+      processing_queue_.pop();
+
+      // Process the request and collect handlers to be called later.
+      if (msg.type == MessageType::WRITE_REQUEST) {
+        value_ = msg.value1;
+        clock_.clock = std::max(clock_.clock, msg.ts.clock) + 1;
+
+        if (write_result_handler_) {
+          handlers_to_call.emplace_back(
+              [this, ts = msg.ts]() { write_result_handler_(ts); });
+        }
+        if (callback_) {
+          handlers_to_call.emplace_back(
+              [this, val = value_]() { callback_(val); });
+        }
+      } else if (msg.type == MessageType::CAS_REQUEST) {
+        bool success = (value_ == msg.value1);
+        if (success) {
+          value_ = msg.value2;
+        }
+
+        clock_.clock = std::max(clock_.clock, msg.ts.clock) + 1;
+
+        if (cas_result_handler_) {
+          handlers_to_call.emplace_back([this, ts = msg.ts, success]() {
+            cas_result_handler_(ts, success);
+          });
+        }
+        if (success && callback_) {
+          handlers_to_call.emplace_back(
+              [this, val = value_]() { callback_(val); });
+        }
+      }
     }
+  } // Lock on mtx_ is released here.
 
-    const Message &msg = req.msg;
-
-    if (msg.type == MessageType::WRITE_REQUEST) {
-      value_ = msg.value1;
-      clock_.clock = std::max(clock_.clock, msg.ts.clock) + 1; // Increment clock after processing
-      if (callback_) {
-        callback_(value_);
-      }
-    } else if (msg.type == MessageType::CAS_REQUEST) {
-      bool success = (value_ == msg.value1);
-      if (success) {
-        value_ = msg.value2;
-      }
-
-      clock_.clock = std::max(clock_.clock, msg.ts.clock) + 1; // Increment clock after processing
-
-      if (cas_result_handler_) {
-        cas_result_handler_(msg.ts, success);
-      }
-
-      if (success && callback_) {
-        callback_(value_);
-      }
-    }
-
-    requests_.erase(ts);
-    processing_queue_.pop();
+  // Call all handlers outside of the critical section.
+  for (const auto &handler : handlers_to_call) {
+    handler();
   }
 }
 

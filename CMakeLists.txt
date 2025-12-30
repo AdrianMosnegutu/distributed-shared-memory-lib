@@ -12,6 +12,7 @@ add_library(dsm STATIC
     src/dsm/config.cpp
     src/dsm/dsm_manager.cpp
     src/dsm/distributed_shared_variable.cpp
+    src/dsm/listener.cpp
 )
 target_include_directories(dsm PUBLIC src vendor)
 target_link_libraries(dsm PRIVATE Threads::Threads)

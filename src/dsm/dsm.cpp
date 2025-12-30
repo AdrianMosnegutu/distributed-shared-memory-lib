@@ -1,6 +1,7 @@
 #include "dsm.hpp"
 #include "config.hpp"
 #include "dsm_manager.hpp"
+#include <memory>
 #include <mpi.h>
 #include <stdexcept>
 
@@ -8,13 +9,20 @@ namespace dsm {
 
 namespace {
 // Global instance of the DSM manager.
-DSMManager *manager = nullptr;
+std::unique_ptr<DSMManager> manager = nullptr;
 int rank = -1;
 int world_size = -1;
 } // namespace
 
 void init(const std::string &config_path) {
-  MPI_Init(nullptr, nullptr);
+  int provided;
+  MPI_Init_thread(nullptr, nullptr, MPI_THREAD_MULTIPLE, &provided);
+
+  if (provided < MPI_THREAD_MULTIPLE) {
+    throw std::runtime_error(
+        "MPI implementation does not provide the required MPI_THREAD_MULTIPLE support.");
+  }
+
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &world_size);
 
@@ -24,13 +32,26 @@ void init(const std::string &config_path) {
     throw std::runtime_error("MPI world size does not match number of processes in config file.");
   }
 
-  manager = new DSMManager(rank, world_size, std::move(config));
+  manager = std::make_unique<DSMManager>(rank, world_size, std::move(config));
   manager->run(); // Starts the listener thread
 }
 
 void finalize() {
-  manager->stop(); // Stops the listener thread
-  delete manager;
+  // Use a barrier to ensure all processes are ready to shut down. This
+  // prevents race conditions where one process sends a message to another that
+  // has already started cleaning up.
+  MPI_Barrier(MPI_COMM_WORLD);
+
+  // Resetting the manager triggers the RAII chain:
+  // ~DSMManager -> ~Listener -> ~jthread -> join()
+  // This cleans up all local resources and stops the listener thread.
+  manager.reset();
+
+  // It is good practice to have another barrier here to ensure all processes
+  // have finished their cleanup before finalizing MPI, though it is often
+  // not strictly necessary if the above logic is sound.
+  MPI_Barrier(MPI_COMM_WORLD);
+
   MPI_Finalize();
 }
 
@@ -41,14 +62,16 @@ void on_change(int var_id, std::function<void(int)> callback) {
   manager->register_callback(var_id, std::move(callback));
 }
 
-void write(int var_id, int value) {
+std::future<void> write(int var_id, int value) {
   if (!manager) {
     throw std::runtime_error("DSM not initialized.");
   }
-  manager->write(var_id, value);
+  return manager->write(var_id, value);
 }
 
-std::future<bool> compare_and_exchange_async(int var_id, int expected_value, int new_value) {
+std::future<bool> compare_and_exchange(int var_id, int expected_value,
+
+                                         int new_value) {
   if (!manager) {
     throw std::runtime_error("DSM not initialized.");
   }
