@@ -1,0 +1,4 @@
+build/
+vendor/
+.clang*
+compile_commands.json
