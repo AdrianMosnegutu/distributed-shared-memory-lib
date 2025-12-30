@@ -1,6 +1,6 @@
 #include "distributed_shared_variable.hpp"
 
-namespace dsm {
+namespace dsm::internal {
 
 DistributedSharedVariable::DistributedSharedVariable(std::vector<int> subscribers)
     : subscribers_(std::move(subscribers)) {}
@@ -30,11 +30,9 @@ void DistributedSharedVariable::process_requests() {
       const Timestamp &ts = processing_queue_.top();
       RequestState &req = requests_.at(ts);
 
-      // A request can only be processed if it has been acknowledged by all
-      // subscribers.
+      // A request can only be processed if it has been acknowledged by all subscribers.
       if (req.acks.size() < subscribers_.size()) {
-        break; // The first request in the queue is not ready, so none after it
-               // are either.
+        break; // The first request in the queue is not ready, so none after it are either.
       }
 
       // Copy necessary data and remove the request from the queues.
@@ -48,12 +46,10 @@ void DistributedSharedVariable::process_requests() {
         clock_.clock = std::max(clock_.clock, msg.ts.clock) + 1;
 
         if (write_result_handler_) {
-          handlers_to_call.emplace_back(
-              [this, ts = msg.ts]() { write_result_handler_(ts); });
+          handlers_to_call.emplace_back([this, ts = msg.ts]() { write_result_handler_(ts); });
         }
         if (callback_) {
-          handlers_to_call.emplace_back(
-              [this, val = value_]() { callback_(val); });
+          handlers_to_call.emplace_back([this, val = value_]() { callback_(val); });
         }
       } else if (msg.type == MessageType::CAS_REQUEST) {
         bool success = (value_ == msg.value1);
@@ -64,13 +60,11 @@ void DistributedSharedVariable::process_requests() {
         clock_.clock = std::max(clock_.clock, msg.ts.clock) + 1;
 
         if (cas_result_handler_) {
-          handlers_to_call.emplace_back([this, ts = msg.ts, success]() {
-            cas_result_handler_(ts, success);
-          });
+          handlers_to_call.emplace_back(
+              [this, ts = msg.ts, success]() { cas_result_handler_(ts, success); });
         }
         if (success && callback_) {
-          handlers_to_call.emplace_back(
-              [this, val = value_]() { callback_(val); });
+          handlers_to_call.emplace_back([this, val = value_]() { callback_(val); });
         }
       }
     }
@@ -99,6 +93,4 @@ void DistributedSharedVariable::register_callback(std::function<void(int)> callb
   callback_ = std::move(callback);
 }
 
-
-
-} // namespace dsm
+} // namespace dsm::internal

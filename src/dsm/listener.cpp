@@ -1,7 +1,8 @@
 #include "listener.hpp"
+#include "message.hpp"
 #include <chrono>
 
-namespace dsm {
+namespace dsm::internal {
 
 void Listener::on_request(RequestHandler handler) { request_handler_ = std::move(handler); }
 
@@ -47,4 +48,4 @@ void Listener::listen(std::stop_token stop_token, MPI_Datatype mpi_message_type)
   }
 }
 
-} // namespace dsm
+} // namespace dsm::internal

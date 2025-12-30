@@ -3,7 +3,7 @@
 #include <fstream>
 #include <stdexcept>
 
-namespace dsm {
+namespace dsm::internal {
 
 using json = nlohmann::json;
 
@@ -27,4 +27,4 @@ Config parse_config(const std::string &file_path) {
   return config;
 }
 
-} // namespace dsm
+} // namespace dsm::internal

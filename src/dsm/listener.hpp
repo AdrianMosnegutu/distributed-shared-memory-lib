@@ -5,7 +5,7 @@
 #include <mpi.h>
 #include <thread>
 
-namespace dsm {
+namespace dsm::internal {
 
 class Listener {
 public:
@@ -31,4 +31,4 @@ private:
   std::stop_source stop_source_;
 };
 
-} // namespace dsm
+} // namespace dsm::internal

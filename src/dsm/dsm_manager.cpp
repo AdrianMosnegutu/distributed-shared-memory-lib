@@ -2,10 +2,10 @@
 #include "distributed_shared_variable.hpp"
 #include <array>
 #include <functional>
-#include <mutex>
 #include <mpi.h>
+#include <mutex>
 
-namespace dsm {
+namespace dsm::internal {
 
 DSMManager::DSMManager(int rank, int world_size, Config config)
     : rank_(rank), world_size_(world_size), config_(std::move(config)),
@@ -52,8 +52,7 @@ DSMManager::DSMManager(int rank, int world_size, Config config)
       if (subscriber_rank == rank_) {
         auto [it, inserted] = variables_.try_emplace(var_id, subscribers);
         if (inserted) {
-          it->second.register_cas_result_handler(
-              std::bind_front(&DSMManager::on_cas_result, this));
+          it->second.register_cas_result_handler(std::bind_front(&DSMManager::on_cas_result, this));
           it->second.register_write_result_handler(
               std::bind_front(&DSMManager::on_write_result, this));
         }
@@ -100,6 +99,10 @@ DSMManager::~DSMManager() {
 
 void DSMManager::run() { listener_->run(mpi_message_type_); }
 
+const std::map<int, std::vector<int>> &DSMManager::get_subscriptions() const {
+  return config_.subscriptions;
+}
+
 void DSMManager::register_callback(int var_id, std::function<void(int)> callback) {
   auto it = variables_.find(var_id);
   if (it == variables_.end()) {
@@ -141,8 +144,7 @@ std::future<void> DSMManager::write(int var_id, int value) {
   return future;
 }
 
-std::future<bool> DSMManager::compare_and_exchange(int var_id, int expected_value,
-                                                 int new_value) {
+std::future<bool> DSMManager::compare_and_exchange(int var_id, int expected_value, int new_value) {
   auto it = variables_.find(var_id);
   if (it == variables_.end()) {
     throw std::runtime_error("Attempted to CAS non-subscribed variable.");
@@ -208,4 +210,4 @@ void DSMManager::resolve_write_promise(const Timestamp &ts) {
   }
 }
 
-} // namespace dsm
+} // namespace dsm::internal

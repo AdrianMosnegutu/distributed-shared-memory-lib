@@ -3,21 +3,9 @@
 #include <cstdint>
 #include <functional>
 
-namespace dsm {
+namespace dsm::internal {
 
-enum class MessageType : uint8_t {
-
-  WRITE_REQUEST,
-
-  CAS_REQUEST,
-
-  WRITE_ACK,
-
-  CAS_ACK,
-
-  SHUTDOWN
-
-};
+enum class MessageType : uint8_t { WRITE_REQUEST, CAS_REQUEST, WRITE_ACK, CAS_ACK, SHUTDOWN };
 
 struct Timestamp {
   int clock;
@@ -34,12 +22,12 @@ struct Message {
   int value2; // Used for new CAS value
 };
 
-} // namespace dsm
+} // namespace dsm::internal
 
 namespace std {
 
-template <> struct hash<dsm::Timestamp> {
-  size_t operator()(const dsm::Timestamp &ts) const {
+template <> struct hash<dsm::internal::Timestamp> {
+  size_t operator()(const dsm::internal::Timestamp &ts) const {
     // A simple hash combination function.
     // Shift the first hash and XOR it with the second.
     return (hash<int>()(ts.clock) << 1) ^ hash<int>()(ts.rank);

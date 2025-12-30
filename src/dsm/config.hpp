@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-namespace dsm {
+namespace dsm::internal {
 
 struct Config {
   int num_processes;
@@ -14,4 +14,4 @@ struct Config {
 
 Config parse_config(const std::string &file_path);
 
-} // namespace dsm
+} // namespace dsm::internal
