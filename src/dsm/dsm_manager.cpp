@@ -1,6 +1,7 @@
 #include "dsm_manager.hpp"
 #include "distributed_shared_variable.hpp"
 #include <array>
+#include <functional>
 #include <mpi.h>
 
 namespace dsm {
@@ -9,10 +10,16 @@ DSMManager::DSMManager(int rank, int world_size, Config config)
     : rank_(rank), world_size_(world_size), config_(std::move(config)) {
   for (const auto &[var_id, subscribers] : config_.subscriptions) {
     for (int subscriber_rank : subscribers) {
-      if (subscriber_rank == rank_) {
-        variables_.try_emplace(var_id, this, subscribers);
-        break;
+      if (subscriber_rank != rank_) {
+        continue;
       }
+
+      auto [it, inserted] = variables_.try_emplace(var_id, subscribers);
+      if (inserted) {
+        it->second.register_cas_result_handler(std::bind_front(&DSMManager::on_cas_result, this));
+      }
+
+      break;
     }
   }
 
@@ -79,14 +86,17 @@ void DSMManager::listener_thread(std::stop_token stop_token) {
         }
         break;
       }
+
       case MessageType::WRITE_ACK:
       case MessageType::CAS_ACK: {
         var.add_ack(msg.ts, sender_rank);
         break;
       }
       }
+
       var.process_requests();
     }
+
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
 }
@@ -156,9 +166,16 @@ std::future<bool> DSMManager::compare_and_exchange(int var_id, int expected_valu
   return future;
 }
 
+void DSMManager::on_cas_result(const Timestamp &ts, bool success) {
+  if (rank_ == ts.rank) {
+    resolve_cas_promise(ts, success);
+  }
+}
+
 void DSMManager::resolve_cas_promise(Timestamp ts, bool success) {
   std::lock_guard<std::mutex> lock(cas_promises_mtx_);
   auto it = cas_promises_.find(ts);
+
   if (it != cas_promises_.end()) {
     it->second.set_value(success);
     cas_promises_.erase(it);

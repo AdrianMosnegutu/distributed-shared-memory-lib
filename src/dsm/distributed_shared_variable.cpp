@@ -1,32 +1,31 @@
 #include "distributed_shared_variable.hpp"
-#include "dsm_manager.hpp"
 
 namespace dsm {
 
-DistributedSharedVariable::DistributedSharedVariable(DSMManager *manager,
-                                                     std::vector<int> subscribers)
-    : manager_(manager), subscribers_(std::move(subscribers)) {}
+DistributedSharedVariable::DistributedSharedVariable(std::vector<int> subscribers)
+    : subscribers_(std::move(subscribers)) {}
 
 void DistributedSharedVariable::add_request(const Message &msg) {
   std::lock_guard<std::mutex> lock(mtx_);
-  if (request_queue_.count(msg.ts) == 0) {
-    request_queue_[msg.ts] = RequestState{.msg = msg, .acks = {}};
+  if (requests_.count(msg.ts) == 0) {
+    requests_.emplace(msg.ts, RequestState{.msg = msg, .acks = {}});
+    processing_queue_.push(msg.ts);
   }
 }
 
 void DistributedSharedVariable::add_ack(const Timestamp &ts, int sender_rank) {
   std::lock_guard<std::mutex> lock(mtx_);
-  if (request_queue_.count(ts) > 0) {
-    request_queue_.at(ts).acks.insert(sender_rank);
+  if (requests_.count(ts) > 0) {
+    requests_.at(ts).acks.insert(sender_rank);
   }
 }
 
 void DistributedSharedVariable::process_requests() {
   std::lock_guard<std::mutex> lock(mtx_);
 
-  while (!request_queue_.empty()) {
-    auto it = request_queue_.begin();
-    RequestState &req = it->second;
+  while (!processing_queue_.empty()) {
+    const Timestamp &ts = processing_queue_.top();
+    RequestState &req = requests_.at(ts);
 
     // A request can only be processed if it has been acknowledged by all subscribers.
     if (req.acks.size() < subscribers_.size()) {
@@ -49,8 +48,8 @@ void DistributedSharedVariable::process_requests() {
 
       clock_.clock = std::max(clock_.clock, msg.ts.clock) + 1; // Increment clock after processing
 
-      if (manager_ != nullptr && manager_->rank_ == msg.ts.rank) {
-        manager_->resolve_cas_promise(msg.ts, success);
+      if (cas_result_handler_) {
+        cas_result_handler_(msg.ts, success);
       }
 
       if (success && callback_) {
@@ -58,7 +57,8 @@ void DistributedSharedVariable::process_requests() {
       }
     }
 
-    request_queue_.erase(it); // Remove the processed request
+    requests_.erase(ts);
+    processing_queue_.pop();
   }
 }
 
@@ -78,5 +78,7 @@ void DistributedSharedVariable::register_callback(std::function<void(int)> callb
   std::lock_guard<std::mutex> lock(mtx_);
   callback_ = std::move(callback);
 }
+
+
 
 } // namespace dsm

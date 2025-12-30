@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 
 namespace dsm {
 
@@ -10,19 +11,7 @@ struct Timestamp {
   int clock;
   int rank;
 
-  bool operator>(const Timestamp &other) const {
-    if (clock != other.clock) {
-      return clock > other.clock;
-    }
-    return rank > other.rank;
-  }
-
-  bool operator<(const Timestamp &other) const {
-    if (clock != other.clock) {
-      return clock < other.clock;
-    }
-    return rank < other.rank;
-  }
+  auto operator<=>(const Timestamp &) const = default;
 };
 
 struct Message {
@@ -34,3 +23,15 @@ struct Message {
 };
 
 } // namespace dsm
+
+namespace std {
+
+template <> struct hash<dsm::Timestamp> {
+  size_t operator()(const dsm::Timestamp &ts) const {
+    // A simple hash combination function.
+    // Shift the first hash and XOR it with the second.
+    return (hash<int>()(ts.clock) << 1) ^ hash<int>()(ts.rank);
+  }
+};
+
+} // namespace std

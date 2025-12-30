@@ -8,12 +8,12 @@ namespace dsm {
 using json = nlohmann::json;
 
 Config parse_config(const std::string &file_path) {
-  std::ifstream f(file_path);
-  if (!f) {
+  std::ifstream file(file_path);
+  if (!file) {
     throw std::runtime_error("Could not open config file: " + file_path);
   }
 
-  json data = json::parse(f);
+  json data = json::parse(file);
 
   Config config;
   config.num_processes = data.at("processes").get<int>();
