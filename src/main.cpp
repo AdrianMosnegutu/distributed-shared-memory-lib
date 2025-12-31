@@ -1,4 +1,4 @@
-#include "dsm/dsm.hpp"
+#include "dsm/api/dsm.hpp"
 #include <cstdlib>
 #include <functional>
 #include <iostream>
@@ -26,7 +26,7 @@ bool is_subscribed(int rank, int var_id) {
 void test_simple_write(int rank) {
   if (rank == 0) {
     print_rank(rank, "Writing 42 to var 1.");
-    dsm::write(1, 42).get(); // Wait for the write to complete
+    dsm::write(1, 42).get();
   }
 }
 

@@ -1,5 +1,5 @@
-#include "dsm_manager.hpp"
-#include "distributed_shared_variable.hpp"
+#include "dsm/manager/dsm_manager.hpp"
+#include "dsm/variables/distributed_shared_variable.hpp"
 #include <array>
 #include <functional>
 #include <mpi.h>
@@ -9,7 +9,7 @@ namespace dsm::internal {
 
 DSMManager::DSMManager(int rank, int world_size, Config config)
     : rank_(rank), world_size_(world_size), config_(std::move(config)),
-      producer_(std::make_unique<Producer>(message_queue_)) { // Pass message_queue_ to Producer
+      producer_(std::make_unique<Producer>(message_queue_)) {
 
   for (const auto &[var_id, subscribers] : config_.subscriptions) {
     for (int subscriber_rank : subscribers) {
@@ -49,18 +49,16 @@ DSMManager::DSMManager(int rank, int world_size, Config config)
 }
 
 DSMManager::~DSMManager() {
-  stop_consumer_thread(); // Stop the consumer thread first
+  stop_consumer_thread(); 
 
-  // 1. Send a "poison pill" message to our own listener thread to unblock it.
+  // Send a "poison pill" message to our own producer thread to unblock it.
   Message shutdown_msg;
   shutdown_msg.type = MessageType::SHUTDOWN;
   MPI_Send(&shutdown_msg, 1, mpi_message_type_, rank_, 0, MPI_COMM_WORLD);
 
-  // 2. Explicitly destroy the listener, which joins the thread. This is a
-  // blocking call that ensures the thread is finished before we proceed.
   producer_.reset();
 
-  // 3. Now that the thread is gone, it's safe to free the MPI resources.
+  // It's safe to free MPI resources after the producer thread is gone.
   MPI_Type_free(&mpi_message_type_);
   MPI_Type_free(&mpi_timestamp_type_);
 }
@@ -73,7 +71,7 @@ void DSMManager::stop_consumer_thread() {
   if (consumer_thread_.joinable()) {
     Message poison_pill;
     poison_pill.type = MessageType::SHUTDOWN;
-    message_queue_.push(poison_pill); // Push a shutdown message
+    message_queue_.push(poison_pill);
     consumer_thread_.join();
   }
 }
@@ -82,38 +80,34 @@ void DSMManager::consumer_thread_loop() {
   while (true) {
     std::optional<Message> optional_msg = message_queue_.pop();
     if (!optional_msg.has_value()) {
-      continue; // Should not happen unless queue is empty and shutdown is not requested
+      continue;
     }
     Message msg = optional_msg.value();
 
     if (msg.type == MessageType::SHUTDOWN) {
-      break; // Exit loop on shutdown message
+      break;
     }
 
     auto it = variables_.find(msg.var_id);
     if (it == variables_.end()) {
-      // Potentially log this: received message for unsubscribed variable
       continue;
     }
     auto &var = it->second;
 
     if (msg.type == MessageType::WRITE_REQUEST || msg.type == MessageType::CAS_REQUEST) {
-      // This is the logic previously in request_handler
       var.add_request(msg);
 
       Message ack_msg;
       ack_msg.type =
           (msg.type == MessageType::WRITE_REQUEST) ? MessageType::WRITE_ACK : MessageType::CAS_ACK;
-      ack_msg.ts = msg.ts; // Echo the timestamp of the original request
+      ack_msg.ts = msg.ts;
       ack_msg.var_id = msg.var_id;
 
-      // Ensure that MPI_Send is only called for actual subscribers
       for (int subscriber_rank : var.get_subscribers()) {
         MPI_Send(&ack_msg, 1, mpi_message_type_, subscriber_rank, 0, MPI_COMM_WORLD);
       }
       var.process_requests();
     } else if (msg.type == MessageType::WRITE_ACK || msg.type == MessageType::CAS_ACK) {
-      // This is the logic previously in ack_handler
       var.add_ack(msg.ts, msg.sender_rank);
       var.process_requests();
     }

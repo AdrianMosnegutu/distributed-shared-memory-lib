@@ -1,5 +1,5 @@
-#include "producer.hpp"
-#include "message.hpp"
+#include "dsm/threads/producer.hpp"
+#include "dsm/messages/message.hpp"
 #include <chrono>
 
 namespace dsm::internal {
@@ -26,13 +26,11 @@ void Producer::listen(std::stop_token stop_token, MPI_Datatype mpi_message_type)
     if (flag) {
       Message msg;
       MPI_Recv(&msg, 1, mpi_message_type, status.MPI_SOURCE, 0, MPI_COMM_WORLD, &status);
-      msg.sender_rank = status.MPI_SOURCE; // Populate sender_rank
+      msg.sender_rank = status.MPI_SOURCE;
 
-      // Push the message to the blocking queue for processing by the consumer thread
       message_queue_.push(msg);
     }
 
-    // Avoid busy-waiting
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
 }

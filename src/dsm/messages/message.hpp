@@ -29,7 +29,6 @@ namespace std {
 
 template <> struct hash<dsm::internal::Timestamp> {
   size_t operator()(const dsm::internal::Timestamp &ts) const {
-    // Shift the first hash and XOR it with the second.
     return (hash<int>()(ts.clock) << 1) ^ hash<int>()(ts.rank);
   }
 };

@@ -1,5 +1,5 @@
-#include "config.hpp"
-#include "../../vendor/json.hpp"
+#include "dsm/config/config.hpp"
+#include "json.hpp"
 #include <fstream>
 #include <stdexcept>
 

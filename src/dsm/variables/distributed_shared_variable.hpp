@@ -1,6 +1,6 @@
 #pragma once
 
-#include "message.hpp"
+#include "dsm/messages/message.hpp"
 #include <functional>
 #include <mutex>
 #include <queue>

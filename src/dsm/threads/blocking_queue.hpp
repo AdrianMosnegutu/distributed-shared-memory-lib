@@ -19,12 +19,12 @@ public:
   }
 
   std::optional<T> pop() {
-    std::unique_lock<std::mutex> lock(mtx_);
-    cv_.wait(lock, [this] { return !queue_.empty(); }); // Wait until queue is not empty
-
-    if (queue_.empty()) { // Should not happen with current wait condition, but good for robustness
-      return std::nullopt;
-    }
+        std::unique_lock<std::mutex> lock(mtx_);
+        cv_.wait(lock, [this]{ return !queue_.empty(); });
+    
+        if (queue_.empty()) {
+            return std::nullopt;
+        }
 
     T value = std::move(queue_.front());
     queue_.pop();

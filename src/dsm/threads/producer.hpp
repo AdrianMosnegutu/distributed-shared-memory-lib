@@ -1,7 +1,7 @@
 #pragma once
 
-#include "blocking_queue.hpp"
-#include "message.hpp"
+#include "dsm/threads/blocking_queue.hpp"
+#include "dsm/messages/message.hpp"
 #include <mpi.h>
 #include <thread>
 

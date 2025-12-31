@@ -1,6 +1,6 @@
-#include "dsm.hpp"
-#include "config.hpp"
-#include "dsm_manager.hpp"
+#include "dsm/api/dsm.hpp"
+#include "dsm/config/config.hpp"
+#include "dsm/manager/dsm_manager.hpp"
 #include <memory>
 #include <mpi.h>
 #include <stdexcept>
@@ -9,7 +9,6 @@ namespace dsm {
 
 namespace {
 
-// Global instance of the DSM manager.
 std::unique_ptr<internal::DSMManager> manager = nullptr;
 int rank = -1;
 int world_size = -1;
@@ -35,23 +34,14 @@ void init(const std::string &config_path) {
   }
 
   manager = std::make_unique<internal::DSMManager>(rank, world_size, std::move(config));
-  manager->run(); // Starts the listener thread
+  manager->run();
 }
 
 void finalize() {
-  // Use a barrier to ensure all processes are ready to shut down. This
-  // prevents race conditions where one process sends a message to another that
-  // has already started cleaning up.
   MPI_Barrier(MPI_COMM_WORLD);
 
-  // Resetting the manager triggers the RAII chain:
-  // ~DSMManager -> ~Producer -> ~jthread -> join()
-  // This cleans up all local resources and stops the listener thread.
   manager.reset();
 
-  // It is good practice to have another barrier here to ensure all processes
-  // have finished their cleanup before finalizing MPI, though it is often
-  // not strictly necessary if the above logic is sound.
   MPI_Barrier(MPI_COMM_WORLD);
 
   MPI_Finalize();

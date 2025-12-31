@@ -8,13 +8,13 @@ find_package(MPI REQUIRED)
 find_package(Threads REQUIRED)
 
 add_library(dsm STATIC
-    src/dsm/dsm.cpp
-    src/dsm/config.cpp
-    src/dsm/dsm_manager.cpp
-    src/dsm/distributed_shared_variable.cpp
-    src/dsm/producer.cpp
+    src/dsm/api/dsm.cpp
+    src/dsm/config/config.cpp
+    src/dsm/manager/dsm_manager.cpp
+    src/dsm/variables/distributed_shared_variable.cpp
+    src/dsm/threads/producer.cpp
 )
-target_include_directories(dsm PUBLIC src vendor src/dsm)
+target_include_directories(dsm PUBLIC src vendor)
 target_link_libraries(dsm PRIVATE Threads::Threads)
 
 add_executable(main src/main.cpp)

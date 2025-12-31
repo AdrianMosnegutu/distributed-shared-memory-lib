@@ -1,7 +1,7 @@
-#include "blocking_queue.hpp"
-#include "config.hpp"
-#include "producer.hpp" // Changed from listener.hpp
-#include "message.hpp"
+#include "dsm/threads/blocking_queue.hpp"
+#include "dsm/config/config.hpp"
+#include "dsm/threads/producer.hpp"
+#include "dsm/messages/message.hpp"
 #include <functional>
 #include <future>
 #include <memory>
@@ -32,7 +32,7 @@ public:
   void resolve_write_promise(const Timestamp &ts);
 
 private:
-  void consumer_thread_loop(); // Method for the consumer thread
+  void consumer_thread_loop();
   void start_consumer_thread();
   void stop_consumer_thread();
 
@@ -43,9 +43,9 @@ private:
   int world_size_;
   Config config_;
 
-  BlockingQueue<Message> message_queue_; // Blocking queue for incoming messages
-  std::unique_ptr<Producer> producer_; // Changed from listener_
-  std::thread consumer_thread_; // Consumer thread member
+  BlockingQueue<Message> message_queue_;
+  std::unique_ptr<Producer> producer_;
+  std::thread consumer_thread_;
 
   std::unordered_map<int, DistributedSharedVariable> variables_;
 
