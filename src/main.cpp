@@ -2,25 +2,12 @@
 #include <cstdlib>
 #include <functional>
 #include <iostream>
-#include <map>
 #include <mpi.h>
 #include <string>
 #include <thread>
 
 void print_rank(int rank, const std::string &msg) {
   std::cout << "[P" << rank << "] " << msg << '\n';
-}
-
-bool is_subscribed(int rank, int var_id) {
-  const auto &subs = dsm::get_subscriptions();
-
-  for (int r : subs.at(var_id)) {
-    if (r == rank) {
-      return true;
-    }
-  }
-
-  return false;
 }
 
 void test_simple_write(int rank) {
@@ -33,9 +20,8 @@ void test_simple_write(int rank) {
 void test_cas_success(int rank) {
   if (rank == 3) {
     print_rank(rank, "Attempting CAS on var 1 (expect 42, new 100).");
-    auto future = dsm::compare_and_exchange(1, 42, 100);
 
-    if (future.get()) {
+    if (dsm::compare_and_exchange(1, 42, 100).get()) {
       print_rank(rank, "CAS successful.");
     } else {
       print_rank(rank, "CAS failed.");
@@ -46,9 +32,8 @@ void test_cas_success(int rank) {
 void test_cas_failure(int rank) {
   if (rank == 2) {
     print_rank(rank, "Attempting CAS on var 1 (expect 50, new 200).");
-    auto future = dsm::compare_and_exchange(1, 50, 200);
 
-    if (future.get()) {
+    if (dsm::compare_and_exchange(1, 50, 200).get()) {
       print_rank(rank, "CAS successful.");
     } else {
       print_rank(rank, "CAS failed.");
@@ -68,32 +53,26 @@ void test_exception(int rank) {
 }
 
 void test_concurrent_writes(int rank) {
-  if (is_subscribed(rank, 1)) {
+  if (dsm::is_subscribed(1, rank)) {
     // All subscribers to var 1 (0, 2, 3) write concurrently.
     // We wait on the future to ensure the write request is processed.
     dsm::write(1, 100 + rank).get();
   }
 }
 
-int main(int argc, char *argv[]) {
-  if (argc < 2) {
-    std::cerr << "Usage: " << argv[0] << " <config_file>" << '\n';
-    return EXIT_FAILURE;
-  }
-
-  const std::string config_path(argv[1]);
-
+int main(int argc, char **argv) {
   try {
-    dsm::init(config_path);
+    dsm::init(argc, argv);
+
     int rank;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-    if (is_subscribed(rank, 1)) {
+    if (dsm::is_subscribed(1, rank)) {
       dsm::on_change(1, [rank](int new_val) {
         print_rank(rank, "Callback for var 1 triggered. New value: " + std::to_string(new_val));
       });
     }
-    if (is_subscribed(rank, 0)) {
+    if (dsm::is_subscribed(0, rank)) {
       dsm::on_change(0, [rank](int new_val) {
         print_rank(rank, "Callback for var 0 triggered. New value: " + std::to_string(new_val));
       });

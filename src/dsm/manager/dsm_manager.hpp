@@ -1,13 +1,14 @@
-#include "dsm/threads/blocking_queue.hpp"
 #include "dsm/config/config.hpp"
-#include "dsm/threads/producer.hpp"
+#include "dsm/data_structures/blocking_queue.hpp"
 #include "dsm/messages/message.hpp"
+#include "dsm/threads/producer.hpp"
 #include <functional>
 #include <future>
 #include <memory>
 #include <mpi.h>
 #include <mutex>
-#include <thread> // Include for std::thread
+#include <set>
+#include <thread>
 #include <unordered_map>
 
 namespace dsm::internal {
@@ -16,12 +17,10 @@ class DistributedSharedVariable; // Forward declaration
 
 class DSMManager {
 public:
-  DSMManager(int rank, int world_size, Config config);
+  explicit DSMManager(int rank, int world_size, Config config);
   ~DSMManager();
 
-  void run();
-
-  const std::map<int, std::vector<int>> &get_subscriptions() const;
+  const std::unordered_map<int, std::set<int>> &get_subscriptions() const;
 
   void register_callback(int var_id, std::function<void(int)> callback);
 

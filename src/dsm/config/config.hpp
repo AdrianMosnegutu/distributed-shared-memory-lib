@@ -1,17 +1,15 @@
 #pragma once
 
-#include <map>
-#include <string>
-#include <vector>
+#include <set>
+#include <unordered_map>
 
 namespace dsm::internal {
 
 struct Config {
-  int num_processes;
   int num_variables;
-  std::map<int, std::vector<int>> subscriptions;
+  std::unordered_map<int, std::set<int>> subscriptions;
 };
 
-Config parse_config(const std::string &file_path);
+Config get_example_config();
 
 } // namespace dsm::internal

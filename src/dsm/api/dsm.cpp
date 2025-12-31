@@ -15,9 +15,9 @@ int world_size = -1;
 
 } // namespace
 
-void init(const std::string &config_path) {
+void init(int argc, char **argv) {
   int provided;
-  MPI_Init_thread(nullptr, nullptr, MPI_THREAD_MULTIPLE, &provided);
+  MPI_Init_thread(&argc, &argv, MPI_THREAD_MULTIPLE, &provided);
 
   if (provided < MPI_THREAD_MULTIPLE) {
     throw std::runtime_error(
@@ -27,27 +27,23 @@ void init(const std::string &config_path) {
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &world_size);
 
-  auto config = internal::parse_config(config_path);
-
-  if (world_size != config.num_processes) {
-    throw std::runtime_error("MPI world size does not match number of processes in config file.");
-  }
-
+  auto config = internal::get_example_config();
   manager = std::make_unique<internal::DSMManager>(rank, world_size, std::move(config));
-  manager->run();
 }
 
 void finalize() {
   MPI_Barrier(MPI_COMM_WORLD);
-
   manager.reset();
-
   MPI_Barrier(MPI_COMM_WORLD);
 
   MPI_Finalize();
 }
 
-const std::map<int, std::vector<int>> &get_subscriptions() {
+bool is_subscribed(int var_id, int rank) {
+  return manager->get_subscriptions().at(var_id).contains(rank);
+}
+
+const std::unordered_map<int, std::set<int>> &get_subscriptions() {
   if (!manager) {
     throw std::runtime_error("DSM not initialized.");
   }

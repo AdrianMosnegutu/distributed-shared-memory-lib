@@ -2,15 +2,16 @@
 
 #include <functional>
 #include <future>
-#include <map>
-#include <string>
+#include <set>
 
 namespace dsm {
 
 // Main API
-void init(const std::string &config_path);
+void init(int argc, char **argv);
 void finalize();
-const std::map<int, std::vector<int>> &get_subscriptions();
+
+bool is_subscribed(int var_id, int rank);
+const std::unordered_map<int, std::set<int>> &get_subscriptions();
 
 // Variable-specific API
 void on_change(int var_id, std::function<void(int)> callback);

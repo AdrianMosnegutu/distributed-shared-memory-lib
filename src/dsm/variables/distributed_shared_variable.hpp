@@ -21,7 +21,7 @@ public:
   using WriteResultHandler = std::function<void(const Timestamp &)>;
 
   DistributedSharedVariable() = default;
-  DistributedSharedVariable(std::vector<int> subscribers);
+  explicit DistributedSharedVariable(std::set<int> subscribers);
 
   void add_request(const Message &msg);
   void add_ack(const Timestamp &ts, int sender_rank);
@@ -29,7 +29,7 @@ public:
 
   int get_value() const;
   Timestamp get_timestamp() const;
-  const std::vector<int> &get_subscribers() const;
+  const std::set<int> &get_subscribers() const;
 
   void register_callback(std::function<void(int)> callback);
 
@@ -47,7 +47,7 @@ private:
   int value_{0};
   Timestamp clock_{.clock = 0, .rank = 0};
 
-  std::vector<int> subscribers_;
+  std::set<int> subscribers_;
   std::function<void(int)> callback_;
 
   CasResultHandler cas_result_handler_;

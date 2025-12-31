@@ -37,19 +37,20 @@ DSMManager::DSMManager(int rank, int world_size, Config config)
   // Create MPI type for the main Message struct
   const std::array<int, 6> msg_blocklengths = {1, 1, 1, 1, 1, 1};
   const std::array<MPI_Aint, 6> msg_displacements = {
-      offsetof(Message, type), offsetof(Message, ts), offsetof(Message, var_id),
+      offsetof(Message, type),   offsetof(Message, ts),     offsetof(Message, var_id),
       offsetof(Message, value1), offsetof(Message, value2), offsetof(Message, sender_rank)};
-  const std::array<MPI_Datatype, 6> msg_types = {MPI_UINT8_T, mpi_timestamp_type_, MPI_INT, MPI_INT,
-                                                 MPI_INT, MPI_INT};
+  const std::array<MPI_Datatype, 6> msg_types = {
+      MPI_UINT8_T, mpi_timestamp_type_, MPI_INT, MPI_INT, MPI_INT, MPI_INT};
   MPI_Type_create_struct(6, msg_blocklengths.data(), msg_displacements.data(), msg_types.data(),
                          &mpi_message_type_);
   MPI_Type_commit(&mpi_message_type_);
 
   start_consumer_thread();
+  producer_->run(mpi_message_type_);
 }
 
 DSMManager::~DSMManager() {
-  stop_consumer_thread(); 
+  stop_consumer_thread();
 
   // Send a "poison pill" message to our own producer thread to unblock it.
   Message shutdown_msg;
@@ -114,9 +115,7 @@ void DSMManager::consumer_thread_loop() {
   }
 }
 
-void DSMManager::run() { producer_->run(mpi_message_type_); }
-
-const std::map<int, std::vector<int>> &DSMManager::get_subscriptions() const {
+const std::unordered_map<int, std::set<int>> &DSMManager::get_subscriptions() const {
   return config_.subscriptions;
 }
 

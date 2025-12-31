@@ -1,6 +1,6 @@
 #pragma once
 
-#include "dsm/threads/blocking_queue.hpp"
+#include "dsm/data_structures/blocking_queue.hpp"
 #include "dsm/messages/message.hpp"
 #include <mpi.h>
 #include <thread>
@@ -15,11 +15,12 @@ public:
   void run(MPI_Datatype mpi_message_type);
 
 private:
-  void listen(std::stop_token stop_token, MPI_Datatype mpi_message_type);
+  void listen(MPI_Datatype mpi_message_type);
 
   BlockingQueue<Message> &message_queue_;
 
   std::jthread thread_;
+  std::stop_token stop_token_;
   std::stop_source stop_source_;
 };
 

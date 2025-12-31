@@ -1,9 +1,0 @@
-{
-    "processes": 4,
-    "variables": 3,
-    "subscriptions": {
-        "0": [0, 1],
-        "1": [0, 2, 3],
-        "2": [1, 3]
-    }
-}

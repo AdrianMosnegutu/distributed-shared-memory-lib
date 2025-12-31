@@ -14,17 +14,19 @@ Producer::~Producer() {
 }
 
 void Producer::run(MPI_Datatype mpi_message_type) {
-  thread_ = std::jthread(&Producer::listen, this, stop_source_.get_token(), mpi_message_type);
+  stop_token_ = stop_source_.get_token();
+  thread_ = std::jthread(&Producer::listen, this, mpi_message_type);
 }
 
-void Producer::listen(std::stop_token stop_token, MPI_Datatype mpi_message_type) {
-  while (!stop_token.stop_requested()) {
-    int flag = 0;
-    MPI_Status status;
+void Producer::listen(MPI_Datatype mpi_message_type) {
+  int flag = 0;
+  MPI_Status status;
+  Message msg;
+
+  while (!stop_token_.stop_requested()) {
     MPI_Iprobe(MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &flag, &status);
 
     if (flag) {
-      Message msg;
       MPI_Recv(&msg, 1, mpi_message_type, status.MPI_SOURCE, 0, MPI_COMM_WORLD, &status);
       msg.sender_rank = status.MPI_SOURCE;
 
