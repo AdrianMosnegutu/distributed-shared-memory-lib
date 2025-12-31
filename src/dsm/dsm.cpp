@@ -45,7 +45,7 @@ void finalize() {
   MPI_Barrier(MPI_COMM_WORLD);
 
   // Resetting the manager triggers the RAII chain:
-  // ~DSMManager -> ~Listener -> ~jthread -> join()
+  // ~DSMManager -> ~Producer -> ~jthread -> join()
   // This cleans up all local resources and stops the listener thread.
   manager.reset();
 

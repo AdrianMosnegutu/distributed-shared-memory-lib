@@ -9,43 +9,7 @@ namespace dsm::internal {
 
 DSMManager::DSMManager(int rank, int world_size, Config config)
     : rank_(rank), world_size_(world_size), config_(std::move(config)),
-      listener_(std::make_unique<Listener>()) {
-
-  // Create event handlers for the listener
-  auto request_handler = [this](const Message &msg) {
-    auto it = variables_.find(msg.var_id);
-    if (it == variables_.end()) {
-      return; // Not subscribed
-    }
-    auto &var = it->second;
-
-    var.add_request(msg);
-
-    Message ack_msg;
-    ack_msg.type =
-        (msg.type == MessageType::WRITE_REQUEST) ? MessageType::WRITE_ACK : MessageType::CAS_ACK;
-    ack_msg.ts = msg.ts; // Echo the timestamp of the original request
-    ack_msg.var_id = msg.var_id;
-
-    for (int subscriber_rank : var.get_subscribers()) {
-      MPI_Send(&ack_msg, 1, mpi_message_type_, subscriber_rank, 0, MPI_COMM_WORLD);
-    }
-    var.process_requests();
-  };
-
-  auto ack_handler = [this](const Message &msg, int sender_rank) {
-    auto it = variables_.find(msg.var_id);
-    if (it == variables_.end()) {
-      return; // Not subscribed
-    }
-    auto &var = it->second;
-    var.add_ack(msg.ts, sender_rank);
-    var.process_requests();
-  };
-
-  // Register handlers with the listener
-  listener_->on_request(request_handler);
-  listener_->on_ack(ack_handler);
+      producer_(std::make_unique<Producer>(message_queue_)) { // Pass message_queue_ to Producer
 
   for (const auto &[var_id, subscribers] : config_.subscriptions) {
     for (int subscriber_rank : subscribers) {
@@ -71,18 +35,22 @@ DSMManager::DSMManager(int rank, int world_size, Config config)
   MPI_Type_commit(&mpi_timestamp_type_);
 
   // Create MPI type for the main Message struct
-  const std::array<int, 5> msg_blocklengths = {1, 1, 1, 1, 1};
-  const std::array<MPI_Aint, 5> msg_displacements = {
+  const std::array<int, 6> msg_blocklengths = {1, 1, 1, 1, 1, 1};
+  const std::array<MPI_Aint, 6> msg_displacements = {
       offsetof(Message, type), offsetof(Message, ts), offsetof(Message, var_id),
-      offsetof(Message, value1), offsetof(Message, value2)};
-  const std::array<MPI_Datatype, 5> msg_types = {MPI_UINT8_T, mpi_timestamp_type_, MPI_INT, MPI_INT,
-                                                 MPI_INT};
-  MPI_Type_create_struct(5, msg_blocklengths.data(), msg_displacements.data(), msg_types.data(),
+      offsetof(Message, value1), offsetof(Message, value2), offsetof(Message, sender_rank)};
+  const std::array<MPI_Datatype, 6> msg_types = {MPI_UINT8_T, mpi_timestamp_type_, MPI_INT, MPI_INT,
+                                                 MPI_INT, MPI_INT};
+  MPI_Type_create_struct(6, msg_blocklengths.data(), msg_displacements.data(), msg_types.data(),
                          &mpi_message_type_);
   MPI_Type_commit(&mpi_message_type_);
+
+  start_consumer_thread();
 }
 
 DSMManager::~DSMManager() {
+  stop_consumer_thread(); // Stop the consumer thread first
+
   // 1. Send a "poison pill" message to our own listener thread to unblock it.
   Message shutdown_msg;
   shutdown_msg.type = MessageType::SHUTDOWN;
@@ -90,14 +58,69 @@ DSMManager::~DSMManager() {
 
   // 2. Explicitly destroy the listener, which joins the thread. This is a
   // blocking call that ensures the thread is finished before we proceed.
-  listener_.reset();
+  producer_.reset();
 
   // 3. Now that the thread is gone, it's safe to free the MPI resources.
   MPI_Type_free(&mpi_message_type_);
   MPI_Type_free(&mpi_timestamp_type_);
 }
 
-void DSMManager::run() { listener_->run(mpi_message_type_); }
+void DSMManager::start_consumer_thread() {
+  consumer_thread_ = std::thread(&DSMManager::consumer_thread_loop, this);
+}
+
+void DSMManager::stop_consumer_thread() {
+  if (consumer_thread_.joinable()) {
+    Message poison_pill;
+    poison_pill.type = MessageType::SHUTDOWN;
+    message_queue_.push(poison_pill); // Push a shutdown message
+    consumer_thread_.join();
+  }
+}
+
+void DSMManager::consumer_thread_loop() {
+  while (true) {
+    std::optional<Message> optional_msg = message_queue_.pop();
+    if (!optional_msg.has_value()) {
+      continue; // Should not happen unless queue is empty and shutdown is not requested
+    }
+    Message msg = optional_msg.value();
+
+    if (msg.type == MessageType::SHUTDOWN) {
+      break; // Exit loop on shutdown message
+    }
+
+    auto it = variables_.find(msg.var_id);
+    if (it == variables_.end()) {
+      // Potentially log this: received message for unsubscribed variable
+      continue;
+    }
+    auto &var = it->second;
+
+    if (msg.type == MessageType::WRITE_REQUEST || msg.type == MessageType::CAS_REQUEST) {
+      // This is the logic previously in request_handler
+      var.add_request(msg);
+
+      Message ack_msg;
+      ack_msg.type =
+          (msg.type == MessageType::WRITE_REQUEST) ? MessageType::WRITE_ACK : MessageType::CAS_ACK;
+      ack_msg.ts = msg.ts; // Echo the timestamp of the original request
+      ack_msg.var_id = msg.var_id;
+
+      // Ensure that MPI_Send is only called for actual subscribers
+      for (int subscriber_rank : var.get_subscribers()) {
+        MPI_Send(&ack_msg, 1, mpi_message_type_, subscriber_rank, 0, MPI_COMM_WORLD);
+      }
+      var.process_requests();
+    } else if (msg.type == MessageType::WRITE_ACK || msg.type == MessageType::CAS_ACK) {
+      // This is the logic previously in ack_handler
+      var.add_ack(msg.ts, msg.sender_rank);
+      var.process_requests();
+    }
+  }
+}
+
+void DSMManager::run() { producer_->run(mpi_message_type_); }
 
 const std::map<int, std::vector<int>> &DSMManager::get_subscriptions() const {
   return config_.subscriptions;

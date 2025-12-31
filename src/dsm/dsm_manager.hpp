@@ -1,13 +1,13 @@
-#pragma once
-
+#include "blocking_queue.hpp"
 #include "config.hpp"
-#include "listener.hpp"
+#include "producer.hpp" // Changed from listener.hpp
 #include "message.hpp"
 #include <functional>
 #include <future>
 #include <memory>
 #include <mpi.h>
 #include <mutex>
+#include <thread> // Include for std::thread
 #include <unordered_map>
 
 namespace dsm::internal {
@@ -32,6 +32,10 @@ public:
   void resolve_write_promise(const Timestamp &ts);
 
 private:
+  void consumer_thread_loop(); // Method for the consumer thread
+  void start_consumer_thread();
+  void stop_consumer_thread();
+
   void on_cas_result(const Timestamp &ts, bool success);
   void on_write_result(const Timestamp &ts);
 
@@ -39,7 +43,9 @@ private:
   int world_size_;
   Config config_;
 
-  std::unique_ptr<Listener> listener_;
+  BlockingQueue<Message> message_queue_; // Blocking queue for incoming messages
+  std::unique_ptr<Producer> producer_; // Changed from listener_
+  std::thread consumer_thread_; // Consumer thread member
 
   std::unordered_map<int, DistributedSharedVariable> variables_;
 
