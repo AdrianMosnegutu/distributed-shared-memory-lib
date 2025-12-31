@@ -1,6 +1,7 @@
 #include "dsm/config/config.hpp"
 #include "dsm/data_structures/blocking_queue.hpp"
 #include "dsm/messages/message.hpp"
+#include "dsm/threads/consumer.hpp"
 #include "dsm/threads/producer.hpp"
 #include <functional>
 #include <future>
@@ -8,7 +9,6 @@
 #include <mpi.h>
 #include <mutex>
 #include <set>
-#include <thread>
 #include <unordered_map>
 
 namespace dsm::internal {
@@ -31,10 +31,6 @@ public:
   void resolve_write_promise(const Timestamp &ts);
 
 private:
-  void consumer_thread_loop();
-  void start_consumer_thread();
-  void stop_consumer_thread();
-
   void on_cas_result(const Timestamp &ts, bool success);
   void on_write_result(const Timestamp &ts);
 
@@ -44,7 +40,7 @@ private:
 
   BlockingQueue<Message> message_queue_;
   std::unique_ptr<Producer> producer_;
-  std::thread consumer_thread_;
+  std::unique_ptr<Consumer> consumer_;
 
   std::unordered_map<int, DistributedSharedVariable> variables_;
 

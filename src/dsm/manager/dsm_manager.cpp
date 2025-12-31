@@ -8,22 +8,7 @@
 namespace dsm::internal {
 
 DSMManager::DSMManager(int rank, int world_size, Config config)
-    : rank_(rank), world_size_(world_size), config_(std::move(config)),
-      producer_(std::make_unique<Producer>(message_queue_)) {
-
-  for (const auto &[var_id, subscribers] : config_.subscriptions) {
-    for (int subscriber_rank : subscribers) {
-      if (subscriber_rank == rank_) {
-        auto [it, inserted] = variables_.try_emplace(var_id, subscribers);
-        if (inserted) {
-          it->second.register_cas_result_handler(std::bind_front(&DSMManager::on_cas_result, this));
-          it->second.register_write_result_handler(
-              std::bind_front(&DSMManager::on_write_result, this));
-        }
-        break;
-      }
-    }
-  }
+    : rank_(rank), world_size_(world_size), config_(std::move(config)) {
 
   // Create MPI type for nested Timestamp struct
   const std::array<int, 2> ts_blocklengths = {1, 1};
@@ -45,77 +30,40 @@ DSMManager::DSMManager(int rank, int world_size, Config config)
                          &mpi_message_type_);
   MPI_Type_commit(&mpi_message_type_);
 
-  start_consumer_thread();
-  producer_->run(mpi_message_type_);
+  producer_ = std::make_unique<Producer>(message_queue_, mpi_message_type_);
+  consumer_ = std::make_unique<Consumer>(message_queue_, variables_, rank_, mpi_message_type_);
+
+  for (const auto &[var_id, subscribers] : config_.subscriptions) {
+    for (int subscriber_rank : subscribers) {
+      if (subscriber_rank == rank_) {
+        auto [it, inserted] = variables_.try_emplace(var_id, subscribers);
+        if (inserted) {
+          it->second.register_cas_result_handler(std::bind_front(&DSMManager::on_cas_result, this));
+          it->second.register_write_result_handler(
+              std::bind_front(&DSMManager::on_write_result, this));
+        }
+        break;
+      }
+    }
+  }
 }
 
 DSMManager::~DSMManager() {
-  stop_consumer_thread();
-
   // Send a "poison pill" message to our own producer thread to unblock it.
-  Message shutdown_msg;
-  shutdown_msg.type = MessageType::SHUTDOWN;
-  MPI_Send(&shutdown_msg, 1, mpi_message_type_, rank_, 0, MPI_COMM_WORLD);
-
+  Message producer_shutdown_msg;
+  producer_shutdown_msg.type = MessageType::SHUTDOWN;
+  MPI_Send(&producer_shutdown_msg, 1, mpi_message_type_, rank_, 0, MPI_COMM_WORLD);
   producer_.reset();
+
+  // Send a "poison pill" message to our own consumer thread to unblock it.
+  Message consumer_shutdown_msg;
+  consumer_shutdown_msg.type = MessageType::SHUTDOWN;
+  message_queue_.push(consumer_shutdown_msg);
+  consumer_.reset();
 
   // It's safe to free MPI resources after the producer thread is gone.
   MPI_Type_free(&mpi_message_type_);
   MPI_Type_free(&mpi_timestamp_type_);
-}
-
-void DSMManager::start_consumer_thread() {
-  consumer_thread_ = std::thread(&DSMManager::consumer_thread_loop, this);
-}
-
-void DSMManager::stop_consumer_thread() {
-  if (consumer_thread_.joinable()) {
-    Message poison_pill;
-    poison_pill.type = MessageType::SHUTDOWN;
-    message_queue_.push(poison_pill);
-    consumer_thread_.join();
-  }
-}
-
-void DSMManager::consumer_thread_loop() {
-  while (true) {
-    std::optional<Message> optional_msg = message_queue_.pop();
-    if (!optional_msg.has_value()) {
-      continue;
-    }
-    Message msg = optional_msg.value();
-
-    if (msg.type == MessageType::SHUTDOWN) {
-      break;
-    }
-
-    auto it = variables_.find(msg.var_id);
-    if (it == variables_.end()) {
-      continue;
-    }
-    auto &var = it->second;
-
-    if (msg.type == MessageType::WRITE_REQUEST || msg.type == MessageType::CAS_REQUEST) {
-      int primary_rank = var.get_primary_rank();
-
-      if (rank_ == primary_rank) {
-        // I am the primary. I received a request from a client.
-        // Broadcast to other subscribers.
-        for (int subscriber_rank : var.get_subscribers()) {
-          if (subscriber_rank != rank_) {
-            MPI_Send(&msg, 1, mpi_message_type_, subscriber_rank, 0, MPI_COMM_WORLD);
-          }
-        }
-        // Process locally.
-        var.add_request(msg);
-        var.process_requests();
-      } else {
-        // I am a secondary. I received a broadcast from the primary.
-        var.add_request(msg);
-        var.process_requests();
-      }
-    }
-  }
 }
 
 const std::unordered_map<int, std::set<int>> &DSMManager::get_subscriptions() const {

@@ -4,7 +4,11 @@
 
 namespace dsm::internal {
 
-Producer::Producer(BlockingQueue<Message> &message_queue) : message_queue_(message_queue) {}
+Producer::Producer(BlockingQueue<Message> &message_queue, MPI_Datatype mpi_message_type)
+    : message_queue_(message_queue) {
+  stop_token_ = stop_source_.get_token();
+  thread_ = std::jthread(&Producer::listen, this, mpi_message_type);
+}
 
 Producer::~Producer() {
   if (thread_.joinable()) {
@@ -13,10 +17,6 @@ Producer::~Producer() {
   }
 }
 
-void Producer::run(MPI_Datatype mpi_message_type) {
-  stop_token_ = stop_source_.get_token();
-  thread_ = std::jthread(&Producer::listen, this, mpi_message_type);
-}
 
 void Producer::listen(MPI_Datatype mpi_message_type) {
   int flag = 0;

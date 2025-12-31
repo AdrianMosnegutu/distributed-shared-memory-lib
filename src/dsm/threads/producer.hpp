@@ -9,10 +9,8 @@ namespace dsm::internal {
 
 class Producer {
 public:
-  explicit Producer(BlockingQueue<Message> &message_queue);
+  explicit Producer(BlockingQueue<Message> &message_queue, MPI_Datatype mpi_message_type);
   ~Producer();
-
-  void run(MPI_Datatype mpi_message_type);
 
 private:
   void listen(MPI_Datatype mpi_message_type);
