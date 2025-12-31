@@ -5,7 +5,7 @@
 
 namespace dsm::internal {
 
-enum class MessageType : uint8_t { WRITE_REQUEST, CAS_REQUEST, WRITE_ACK, CAS_ACK, SHUTDOWN };
+enum class MessageType : uint8_t { WRITE_REQUEST, CAS_REQUEST, SHUTDOWN };
 
 struct Timestamp {
   int clock;

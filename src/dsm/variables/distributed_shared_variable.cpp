@@ -3,20 +3,19 @@
 namespace dsm::internal {
 
 DistributedSharedVariable::DistributedSharedVariable(std::set<int> subscribers)
-    : subscribers_(std::move(subscribers)) {}
+    : subscribers_(std::move(subscribers)) {
+  if (!subscribers_.empty()) {
+    primary_rank_ = *subscribers_.begin();
+  } else {
+    primary_rank_ = -1; // Or some other invalid rank
+  }
+}
 
 void DistributedSharedVariable::add_request(const Message &msg) {
   std::lock_guard<std::mutex> lock(mtx_);
   if (requests_.count(msg.ts) == 0) {
-    requests_.emplace(msg.ts, RequestState{.msg = msg, .acks = {}});
+    requests_.emplace(msg.ts, msg);
     processing_queue_.push(msg.ts);
-  }
-}
-
-void DistributedSharedVariable::add_ack(const Timestamp &ts, int sender_rank) {
-  std::lock_guard<std::mutex> lock(mtx_);
-  if (requests_.count(ts) > 0) {
-    requests_.at(ts).acks.insert(sender_rank);
   }
 }
 
@@ -28,15 +27,7 @@ void DistributedSharedVariable::process_requests() {
 
     while (!processing_queue_.empty()) {
       const Timestamp &ts = processing_queue_.top();
-      RequestState &req = requests_.at(ts);
-
-      if (req.acks.size() < subscribers_.size()) {
-        break;
-      }
-
-      const Message msg = req.msg;
-      requests_.erase(ts);
-      processing_queue_.pop();
+      const Message &msg = requests_.at(ts);
 
       if (msg.type == MessageType::WRITE_REQUEST) {
         value_ = msg.value1;
@@ -64,6 +55,9 @@ void DistributedSharedVariable::process_requests() {
           handlers_to_call.emplace_back([this, val = value_]() { callback_(val); });
         }
       }
+
+      requests_.erase(ts);
+      processing_queue_.pop();
     }
   }
 
@@ -83,6 +77,8 @@ Timestamp DistributedSharedVariable::get_timestamp() const {
 }
 
 const std::set<int> &DistributedSharedVariable::get_subscribers() const { return subscribers_; }
+
+int DistributedSharedVariable::get_primary_rank() const { return primary_rank_; }
 
 void DistributedSharedVariable::register_callback(std::function<void(int)> callback) {
   std::lock_guard<std::mutex> lock(mtx_);

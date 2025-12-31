@@ -96,21 +96,24 @@ void DSMManager::consumer_thread_loop() {
     auto &var = it->second;
 
     if (msg.type == MessageType::WRITE_REQUEST || msg.type == MessageType::CAS_REQUEST) {
-      var.add_request(msg);
+      int primary_rank = var.get_primary_rank();
 
-      Message ack_msg;
-      ack_msg.type =
-          (msg.type == MessageType::WRITE_REQUEST) ? MessageType::WRITE_ACK : MessageType::CAS_ACK;
-      ack_msg.ts = msg.ts;
-      ack_msg.var_id = msg.var_id;
-
-      for (int subscriber_rank : var.get_subscribers()) {
-        MPI_Send(&ack_msg, 1, mpi_message_type_, subscriber_rank, 0, MPI_COMM_WORLD);
+      if (rank_ == primary_rank) {
+        // I am the primary. I received a request from a client.
+        // Broadcast to other subscribers.
+        for (int subscriber_rank : var.get_subscribers()) {
+          if (subscriber_rank != rank_) {
+            MPI_Send(&msg, 1, mpi_message_type_, subscriber_rank, 0, MPI_COMM_WORLD);
+          }
+        }
+        // Process locally.
+        var.add_request(msg);
+        var.process_requests();
+      } else {
+        // I am a secondary. I received a broadcast from the primary.
+        var.add_request(msg);
+        var.process_requests();
       }
-      var.process_requests();
-    } else if (msg.type == MessageType::WRITE_ACK || msg.type == MessageType::CAS_ACK) {
-      var.add_ack(msg.ts, msg.sender_rank);
-      var.process_requests();
     }
   }
 }
@@ -153,8 +156,9 @@ std::future<void> DSMManager::write(int var_id, int value) {
   }
 
   const auto &subscribers = config_.subscriptions.at(var_id);
-  for (int subscriber_rank : subscribers) {
-    MPI_Send(&msg, 1, mpi_message_type_, subscriber_rank, 0, MPI_COMM_WORLD);
+  int primary_rank = var.get_primary_rank();
+  if (primary_rank != -1) {
+    MPI_Send(&msg, 1, mpi_message_type_, primary_rank, 0, MPI_COMM_WORLD);
   }
 
   return future;
@@ -187,8 +191,9 @@ std::future<bool> DSMManager::compare_and_exchange(int var_id, int expected_valu
   }
 
   const auto &subscribers = config_.subscriptions.at(var_id);
-  for (int subscriber_rank : subscribers) {
-    MPI_Send(&msg, 1, mpi_message_type_, subscriber_rank, 0, MPI_COMM_WORLD);
+  int primary_rank = var.get_primary_rank();
+  if (primary_rank != -1) {
+    MPI_Send(&msg, 1, mpi_message_type_, primary_rank, 0, MPI_COMM_WORLD);
   }
 
   return future;

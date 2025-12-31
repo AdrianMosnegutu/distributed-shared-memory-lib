@@ -10,11 +10,6 @@
 
 namespace dsm::internal {
 
-struct RequestState {
-  Message msg;
-  std::set<int> acks;
-};
-
 class DistributedSharedVariable {
 public:
   using CasResultHandler = std::function<void(const Timestamp &, bool)>;
@@ -24,12 +19,12 @@ public:
   explicit DistributedSharedVariable(std::set<int> subscribers);
 
   void add_request(const Message &msg);
-  void add_ack(const Timestamp &ts, int sender_rank);
   void process_requests();
 
   int get_value() const;
   Timestamp get_timestamp() const;
   const std::set<int> &get_subscribers() const;
+  int get_primary_rank() const;
 
   void register_callback(std::function<void(int)> callback);
 
@@ -37,7 +32,6 @@ public:
     std::lock_guard<std::mutex> lock(mtx_);
     write_result_handler_ = std::forward<Handler>(handler);
   }
-
   template <typename Handler> void register_cas_result_handler(Handler &&handler) {
     std::lock_guard<std::mutex> lock(mtx_);
     cas_result_handler_ = std::forward<Handler>(handler);
@@ -48,12 +42,13 @@ private:
   Timestamp clock_{.clock = 0, .rank = 0};
 
   std::set<int> subscribers_;
+  int primary_rank_;
   std::function<void(int)> callback_;
 
   CasResultHandler cas_result_handler_;
   WriteResultHandler write_result_handler_;
 
-  std::unordered_map<Timestamp, RequestState> requests_;
+  std::unordered_map<Timestamp, Message> requests_;
   std::priority_queue<Timestamp, std::vector<Timestamp>, std::greater<>> processing_queue_;
 
   mutable std::mutex mtx_;
