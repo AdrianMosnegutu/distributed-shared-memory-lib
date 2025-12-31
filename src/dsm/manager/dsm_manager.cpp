@@ -8,7 +8,8 @@
 namespace dsm::internal {
 
 DSMManager::DSMManager(int rank, int world_size, Config config)
-    : rank_(rank), world_size_(world_size), config_(std::move(config)) {
+    : rank_(rank), world_size_(world_size), config_(std::move(config)),
+      promise_manager_(std::make_unique<PromiseManager>()) {
 
   // Create MPI type for nested Timestamp struct
   const std::array<int, 2> ts_blocklengths = {1, 1};
@@ -98,10 +99,7 @@ std::future<void> DSMManager::write(int var_id, int value) {
   std::promise<void> promise;
   auto future = promise.get_future();
 
-  {
-    std::lock_guard<std::mutex> lock(write_promises_mtx_);
-    write_promises_[ts] = std::move(promise);
-  }
+  promise_manager_->add_write_promise(ts, std::move(promise));
 
   const auto &subscribers = config_.subscriptions.at(var_id);
   int primary_rank = var.get_primary_rank();
@@ -133,10 +131,7 @@ std::future<bool> DSMManager::compare_and_exchange(int var_id, int expected_valu
   std::promise<bool> promise;
   auto future = promise.get_future();
 
-  {
-    std::lock_guard<std::mutex> lock(cas_promises_mtx_);
-    cas_promises_[ts] = std::move(promise);
-  }
+  promise_manager_->add_cas_promise(ts, std::move(promise));
 
   const auto &subscribers = config_.subscriptions.at(var_id);
   int primary_rank = var.get_primary_rank();
@@ -149,33 +144,13 @@ std::future<bool> DSMManager::compare_and_exchange(int var_id, int expected_valu
 
 void DSMManager::on_cas_result(const Timestamp &ts, bool success) {
   if (rank_ == ts.rank) {
-    resolve_cas_promise(ts, success);
+    promise_manager_->resolve_cas_promise(ts, success);
   }
 }
 
 void DSMManager::on_write_result(const Timestamp &ts) {
   if (rank_ == ts.rank) {
-    resolve_write_promise(ts);
-  }
-}
-
-void DSMManager::resolve_cas_promise(Timestamp ts, bool success) {
-  std::lock_guard<std::mutex> lock(cas_promises_mtx_);
-  auto it = cas_promises_.find(ts);
-
-  if (it != cas_promises_.end()) {
-    it->second.set_value(success);
-    cas_promises_.erase(it);
-  }
-}
-
-void DSMManager::resolve_write_promise(const Timestamp &ts) {
-  std::lock_guard<std::mutex> lock(write_promises_mtx_);
-  auto it = write_promises_.find(ts);
-
-  if (it != write_promises_.end()) {
-    it->second.set_value();
-    write_promises_.erase(it);
+    promise_manager_->resolve_write_promise(ts);
   }
 }
 
