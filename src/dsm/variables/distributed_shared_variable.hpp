@@ -1,6 +1,6 @@
 #pragma once
 
-#include "dsm/messages/message.hpp"
+#include "dsm/common/message.hpp"
 #include <functional>
 #include <mutex>
 #include <queue>
@@ -32,6 +32,7 @@ public:
     std::lock_guard<std::mutex> lock(mtx_);
     write_result_handler_ = std::forward<Handler>(handler);
   }
+
   template <typename Handler> void register_cas_result_handler(Handler &&handler) {
     std::lock_guard<std::mutex> lock(mtx_);
     cas_result_handler_ = std::forward<Handler>(handler);

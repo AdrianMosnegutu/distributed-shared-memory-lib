@@ -1,6 +1,6 @@
 #pragma once
 
-#include "dsm/messages/message.hpp"
+#include "dsm/common/message.hpp"
 #include <future>
 #include <mutex>
 #include <unordered_map>

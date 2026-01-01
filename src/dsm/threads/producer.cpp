@@ -1,5 +1,4 @@
 #include "dsm/threads/producer.hpp"
-#include "dsm/messages/message.hpp"
 #include <chrono>
 
 namespace dsm::internal {
@@ -16,7 +15,6 @@ Producer::~Producer() {
     thread_.join();
   }
 }
-
 
 void Producer::listen(MPI_Datatype mpi_message_type) {
   int flag = 0;
